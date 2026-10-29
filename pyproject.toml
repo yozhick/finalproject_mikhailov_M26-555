@@ -1,13 +1,15 @@
 [project]
 name = "finalproject-mikhailov-m26-555"
 version = "0.1.0"
-description = ""
+description = "Учебные модели пользователей, кошельков и валютных портфелей."
 readme = "README.md"
 authors = [
     { name = "Tinny", email = "yozhicksun@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "prettytable>=3.18.0",
+]
 
 [tool.ruff]
 line-length = 88

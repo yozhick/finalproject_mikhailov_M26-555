@@ -1,7 +1,10 @@
-.PHONY: install lint format format-check
+.PHONY: install run lint format format-check
 
 install:
 	uv sync
+
+run:
+	uv run python main.py
 
 lint:
 	uv run ruff check .
