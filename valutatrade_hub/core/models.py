@@ -4,15 +4,13 @@ import hashlib
 import hmac
 import math
 import secrets
-from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
 from valutatrade_hub.core.currencies import get_currency, validate_currency_code
 from valutatrade_hub.core.exceptions import InsufficientFundsError
 from valutatrade_hub.core.utils import (
-    get_exchange_rate,
-    load_exchange_rates,
+    RateService,
     load_user_data,
     validate_number,
     validate_user_id,
@@ -261,15 +259,14 @@ class Portfolio:
     def get_total_value(
         self,
         base_currency: str = "USD",
-        exchange_rates: Mapping[str, float] | None = None,
+        *,
+        rate_service: RateService | None = None,
     ) -> float:
         """Расчёт общей стоимости портфеля в базовой валюте."""
-        base = validate_currency_code(base_currency)
-        if not any(wallet.balance for wallet in self._wallets.values()):
-            return 0.0
-        rates = load_exchange_rates() if exchange_rates is None else exchange_rates
+        base = get_currency(base_currency).code
+        rates = RateService() if rate_service is None else rate_service
         values = [
-            wallet.balance * get_exchange_rate(code, base, rates)
+            wallet.balance * rates.get_rate(code, base).rate
             for code, wallet in self._wallets.items()
             if wallet.balance
         ]

@@ -1,10 +1,8 @@
 """Проверка данных моделей и чтение JSON-файлов."""
 
-import json
 import math
-import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,58 +10,11 @@ from typing import Any
 
 from valutatrade_hub.core.currencies import (
     get_currency,
-    supported_codes,
     validate_currency_code,
 )
 from valutatrade_hub.core.exceptions import ApiRequestError
+from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
-
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-USERS_FILE = DATA_DIR / "users.json"
-RATES_FILE = DATA_DIR / "rates.json"
-
-
-def read_json(path: Path, default: Any) -> Any:
-    """Чтение данных из JSON-файла."""
-    try:
-        with path.open(encoding="utf-8") as file:
-            return json.load(file)
-    except FileNotFoundError:
-        return default
-
-
-def write_json(path: Path, data: Any) -> None:
-    """Сохранение данных в JSON-файл."""
-    text = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False
-        ) as file:
-            temporary_path = Path(file.name)
-            file.write(text)
-        for attempt in range(5):
-            try:
-                temporary_path.replace(path)
-                break
-            except PermissionError as error:
-                if getattr(error, "winerror", None) not in (5, 32) or attempt == 4:
-                    raise
-                time.sleep(0.01 * (attempt + 1))
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-
-
-def read_records(path: Path) -> list[dict[str, Any]]:
-    """Чтение списка записей из JSON-файла."""
-    records = read_json(path, [])
-    if not isinstance(records, list) or any(
-        not isinstance(item, dict) for item in records
-    ):
-        raise ValueError(f"Файл {path.name} должен содержать список объектов.")
-    return records
 
 
 def validate_amount(amount: float | str) -> float:
@@ -107,7 +58,6 @@ def validate_number(value: float, name: str, *, positive: bool = False) -> float
 
 def load_user_data(user_id: int) -> dict[str, Any]:
     """Чтение данных пользователя по идентификатору из users.json."""
-    from valutatrade_hub.infra.database import DatabaseManager
 
     validate_user_id(user_id)
     users = DatabaseManager().read("users", [])
@@ -119,44 +69,6 @@ def load_user_data(user_id: int) -> dict[str, Any]:
     if len(matches) > 1:
         raise ValueError(f"Идентификатор пользователя {user_id} повторяется.")
     return matches[0]
-
-
-def load_exchange_rates() -> dict[str, float]:
-    """Чтение курсов из rates.json, выраженных в USD за единицу валюты."""
-    from valutatrade_hub.infra.database import DatabaseManager
-
-    data = DatabaseManager().read("rates", {})
-    if not isinstance(data, dict):
-        raise ValueError("Файл курсов должен содержать объект с кодами валют.")
-    rates = {"USD": 1.0}
-    for pair, record in data.items():
-        if pair.endswith("_USD") and isinstance(record, dict):
-            code = validate_currency_code(pair.removesuffix("_USD"))
-            rates[code] = validate_number(
-                record.get("rate"), "Значение курса", positive=True
-            )
-    return rates
-
-
-def get_exchange_rate(
-    currency_code: str,
-    base_currency: str = "USD",
-    exchange_rates: Mapping[str, float] | None = None,
-) -> float:
-    """Расчёт курса валютной пары по курсам относительно USD."""
-    code = get_currency(currency_code).code
-    base = get_currency(base_currency).code
-    if code == base:
-        return 1.0
-    rates = load_exchange_rates() if exchange_rates is None else exchange_rates
-    if not isinstance(rates, Mapping):
-        raise TypeError("Курсы должны быть представлены словарём.")
-    values = {}
-    for symbol in (code, base):
-        if symbol not in rates:
-            raise ValueError(f"Курс валюты {symbol} отсутствует.")
-        values[symbol] = validate_number(rates[symbol], "Значение курса", positive=True)
-    return validate_number(values[code] / values[base], "Значение курса", positive=True)
 
 
 STUB_RATES = {
@@ -213,7 +125,6 @@ class RateService:
         ttl_seconds: float | None = None,
     ) -> None:
         """Инициализация кеша и источника курсов."""
-        from valutatrade_hub.infra.database import DatabaseManager
 
         self._settings = SettingsLoader()
         self._database = DatabaseManager()
@@ -250,10 +161,6 @@ class RateService:
         except (OSError, ValueError):
             return {}
         return data if isinstance(data, dict) else {}
-
-    def known_currencies(self) -> set[str]:
-        """Получение кодов зарегистрированных валют."""
-        return set(supported_codes())
 
     def _pair(
         self, data: dict[str, Any], code: str, base: str

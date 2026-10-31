@@ -1,17 +1,15 @@
 """Операции пользователей и валютных портфелей."""
 
 import math
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from valutatrade_hub.core.currencies import get_currency, validate_currency_code
+from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import InsufficientFundsError
-from valutatrade_hub.core.models import Portfolio, User, Wallet
+from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.utils import (
     RateQuote,
     RateService,
-    get_exchange_rate,
     validate_amount,
     validate_number,
 )
@@ -107,81 +105,6 @@ class JsonStorage:
             else:
                 records.append(portfolio.to_dict())
             self._database.write(self.portfolios_file, records)
-
-
-def _trade_values(
-    currency_code: str,
-    amount: float,
-    exchange_rates: Mapping[str, float] | None,
-) -> tuple[str, float, float]:
-    """Проверка параметров операции и расчёт стоимости в USD."""
-    code = validate_currency_code(currency_code)
-    amount = validate_number(amount, "Значение суммы", positive=True)
-    rate = get_exchange_rate(code, "USD", exchange_rates)
-    cost = validate_number(amount * rate, "Значение стоимости", positive=True)
-    return code, amount, cost
-
-
-def buy_currency(
-    portfolio: Portfolio,
-    currency_code: str,
-    amount: float,
-    exchange_rates: Mapping[str, float] | None = None,
-    *,
-    debit_usd: bool = True,
-) -> Wallet:
-    """Покупка валюты с изменением балансов кошельков."""
-    code, amount, cost = _trade_values(currency_code, amount, exchange_rates)
-    if not debit_usd:
-        wallet = portfolio.wallets.get(code)
-        validate_number((wallet.balance if wallet else 0) + amount, "Значение баланса")
-        if wallet is None:
-            wallet = portfolio.add_currency(code)
-        wallet.deposit(amount)
-        return wallet
-    if code == "USD":
-        raise ValueError("Валюта покупки или продажи должна отличаться от USD.")
-    usd_wallet = portfolio.get_wallet("USD")
-    if cost > usd_wallet.balance:
-        raise InsufficientFundsError(usd_wallet.balance, cost, "USD")
-    wallet = portfolio.wallets.get(code)
-    balance = wallet.balance if wallet is not None else 0.0
-    new_balance = validate_number(balance + amount, "Значение баланса")
-    new_usd_balance = validate_number(usd_wallet.balance - cost, "Значение баланса")
-    if wallet is None:
-        wallet = portfolio.add_currency(code)
-    usd_wallet.balance = new_usd_balance
-    wallet.balance = new_balance
-    return wallet
-
-
-def sell_currency(
-    portfolio: Portfolio,
-    currency_code: str,
-    amount: float,
-    exchange_rates: Mapping[str, float] | None = None,
-    *,
-    credit_usd: bool = True,
-) -> Wallet:
-    """Продажа валюты с изменением балансов кошельков."""
-    code, amount, cost = _trade_values(currency_code, amount, exchange_rates)
-    if code == "USD" and credit_usd:
-        raise ValueError("Валюта покупки или продажи должна отличаться от USD.")
-    wallet = portfolio.get_wallet(code)
-    if not credit_usd:
-        wallet.withdraw(amount)
-        return wallet
-    if amount > wallet.balance:
-        raise InsufficientFundsError(wallet.balance, amount, code)
-    usd_wallet = portfolio.wallets.get("USD")
-    usd_balance = usd_wallet.balance if usd_wallet is not None else 0.0
-    new_usd_balance = validate_number(usd_balance + cost, "Значение баланса")
-    validate_number(wallet.balance - amount, "Значение баланса")
-    if usd_wallet is None:
-        usd_wallet = portfolio.add_currency("USD")
-    wallet.withdraw(amount)
-    usd_wallet.balance = new_usd_balance
-    return wallet
 
 
 class TradingService:
@@ -299,16 +222,26 @@ class TradingService:
                 if amount > before:
                     raise InsufficientFundsError(before, amount, code)
             quote = self.rates.get_rate(code, "USD")
-            rates = {"USD": 1.0, code: quote.rate}
-            if selling:
-                wallet = sell_currency(
-                    portfolio, code, amount, rates, credit_usd=code != "USD"
-                )
-            else:
-                wallet = buy_currency(portfolio, code, amount, rates, debit_usd=False)
             total = validate_number(
                 amount * quote.rate, "Значение стоимости", positive=True
             )
+            if selling:
+                if code != "USD":
+                    usd_wallet = portfolio.wallets.get("USD")
+                    usd_balance = usd_wallet.balance if usd_wallet is not None else 0.0
+                    new_usd_balance = validate_number(
+                        usd_balance + total, "Значение баланса"
+                    )
+                    if usd_wallet is None:
+                        usd_wallet = portfolio.add_currency("USD")
+                    wallet.withdraw(amount)
+                    usd_wallet.balance = new_usd_balance
+                else:
+                    wallet.withdraw(amount)
+            else:
+                if wallet is None:
+                    wallet = portfolio.add_currency(code)
+                wallet.deposit(amount)
             self.storage.save_portfolio(portfolio)
             return {
                 "currency_code": code,

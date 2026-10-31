@@ -68,6 +68,23 @@ def _message(
     return " ".join(parts)
 
 
+def _record(
+    action: str,
+    arguments: dict[str, Any],
+    result: Any,
+    error: Exception | None,
+    verbose: bool,
+) -> None:
+    """Запись результата операции с обработкой ошибок журнала."""
+    try:
+        include_context = verbose or SettingsLoader().get("LOG_VERBOSE", False)
+        logger = configure_logging()
+        logger.info(_message(action, arguments, result, error, include_context))
+    except Exception:
+        # Ошибка журнала не изменяет результат пользовательской операции.
+        pass
+
+
 def log_action(
     func: Callable | str | None = None,
     *,
@@ -87,20 +104,16 @@ def log_action(
         @wraps(method)
         def wrapper(*args, **kwargs):
             """Выполнение операции с записью результата в журнал."""
-            logger = configure_logging()
             try:
                 arguments = dict(signature.bind_partial(*args, **kwargs).arguments)
             except TypeError:
                 arguments = {}
-            include_context = verbose or SettingsLoader().get("LOG_VERBOSE", False)
             try:
                 result = method(*args, **kwargs)
             except Exception as error:
-                logger.info(
-                    _message(action_name, arguments, None, error, include_context)
-                )
+                _record(action_name, arguments, None, error, verbose)
                 raise
-            logger.info(_message(action_name, arguments, result, None, include_context))
+            _record(action_name, arguments, result, None, verbose)
             return result
 
         return wrapper

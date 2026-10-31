@@ -1,13 +1,48 @@
 """Доступ к JSON-файлам приложения."""
 
+import json
+import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from valutatrade_hub.core.utils import read_json, write_json
 from valutatrade_hub.infra.settings import SettingsLoader
+
+
+def read_json(path: Path, default: Any) -> Any:
+    """Чтение данных из JSON-файла."""
+    try:
+        with path.open(encoding="utf-8") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return default
+
+
+def write_json(path: Path, data: Any) -> None:
+    """Сохранение данных в JSON-файл."""
+    text = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False
+        ) as file:
+            temporary_path = Path(file.name)
+            file.write(text)
+        for attempt in range(5):
+            try:
+                temporary_path.replace(path)
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in (5, 32) or attempt == 4:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 class DatabaseManager:
