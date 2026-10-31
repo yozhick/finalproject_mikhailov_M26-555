@@ -24,3 +24,19 @@ ignore = []
 dev = [
     "ruff>=0.17.2",
 ]
+
+[tool.valutatrade]
+DATA_DIR = "data"
+USERS_FILE = "users.json"
+PORTFOLIOS_FILE = "portfolios.json"
+RATES_FILE = "rates.json"
+RATES_TTL_SECONDS = 300
+DEFAULT_BASE_CURRENCY = "USD"
+LOG_DIR = "logs"
+LOG_FILE = "actions.log"
+LOG_LEVEL = "INFO"
+LOG_FORMAT = "%(levelname)s %(asctime)s %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+LOG_MAX_BYTES = 1048576
+LOG_BACKUP_COUNT = 3
+LOG_VERBOSE = false

@@ -10,6 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from valutatrade_hub.core.currencies import (
+    get_currency,
+    supported_codes,
+    validate_currency_code,
+)
+from valutatrade_hub.core.exceptions import ApiRequestError
+from valutatrade_hub.infra.settings import SettingsLoader
+
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 USERS_FILE = DATA_DIR / "users.json"
 RATES_FILE = DATA_DIR / "rates.json"
@@ -35,7 +43,14 @@ def write_json(path: Path, data: Any) -> None:
         ) as file:
             temporary_path = Path(file.name)
             file.write(text)
-        temporary_path.replace(path)
+        for attempt in range(5):
+            try:
+                temporary_path.replace(path)
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in (5, 32) or attempt == 4:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -74,16 +89,6 @@ def validate_user_id(user_id: int) -> int:
     return user_id
 
 
-def normalize_currency_code(currency_code: str) -> str:
-    """Проверка кода валюты и приведение к верхнему регистру."""
-    if not isinstance(currency_code, str):
-        raise TypeError("Код валюты должен быть строкой.")
-    code = currency_code.strip().upper()
-    if not code or not code.isascii() or not code.isalnum():
-        raise ValueError("Код валюты должен содержать латинские буквы или цифры.")
-    return code
-
-
 def validate_number(value: float, name: str, *, positive: bool = False) -> float:
     """Проверка типа, конечности и знака числа."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -102,9 +107,10 @@ def validate_number(value: float, name: str, *, positive: bool = False) -> float
 
 def load_user_data(user_id: int) -> dict[str, Any]:
     """Чтение данных пользователя по идентификатору из users.json."""
+    from valutatrade_hub.infra.database import DatabaseManager
+
     validate_user_id(user_id)
-    with USERS_FILE.open(encoding="utf-8") as file:
-        users = json.load(file)
+    users = DatabaseManager().read("users", [])
     if not isinstance(users, list) or any(not isinstance(user, dict) for user in users):
         raise ValueError("Файл пользователей должен содержать список объектов.")
     matches = [user for user in users if user.get("user_id") == user_id]
@@ -117,13 +123,15 @@ def load_user_data(user_id: int) -> dict[str, Any]:
 
 def load_exchange_rates() -> dict[str, float]:
     """Чтение курсов из rates.json, выраженных в USD за единицу валюты."""
-    data = read_json(RATES_FILE, {})
+    from valutatrade_hub.infra.database import DatabaseManager
+
+    data = DatabaseManager().read("rates", {})
     if not isinstance(data, dict):
         raise ValueError("Файл курсов должен содержать объект с кодами валют.")
     rates = {"USD": 1.0}
     for pair, record in data.items():
         if pair.endswith("_USD") and isinstance(record, dict):
-            code = normalize_currency_code(pair.removesuffix("_USD"))
+            code = validate_currency_code(pair.removesuffix("_USD"))
             rates[code] = validate_number(
                 record.get("rate"), "Значение курса", positive=True
             )
@@ -136,8 +144,8 @@ def get_exchange_rate(
     exchange_rates: Mapping[str, float] | None = None,
 ) -> float:
     """Расчёт курса валютной пары по курсам относительно USD."""
-    code = normalize_currency_code(currency_code)
-    base = normalize_currency_code(base_currency)
+    code = get_currency(currency_code).code
+    base = get_currency(base_currency).code
     if code == base:
         return 1.0
     rates = load_exchange_rates() if exchange_rates is None else exchange_rates
@@ -177,16 +185,6 @@ def parse_timestamp(value: str) -> datetime:
     )
 
 
-class RateUnavailableError(ValueError):
-    """Отсутствие доступного курса валютной пары."""
-
-    def __init__(self, from_currency: str, to_currency: str) -> None:
-        """Формирование сообщения о недоступном курсе."""
-        super().__init__(
-            f"Курс {from_currency}→{to_currency} недоступен. Повторите попытку позже."
-        )
-
-
 @dataclass(frozen=True)
 class RateQuote:
     """Курс валютной пары с датой обновления и источником."""
@@ -208,44 +206,57 @@ class RateService:
 
     def __init__(
         self,
-        cache_path: Path = RATES_FILE,
+        cache_path: Path | None = None,
         provider: Callable[[], dict[str, Any]] | None = fetch_stub_rates,
         *,
         clock: Callable[[], float] = time.time,
-        ttl_seconds: float = 300,
+        ttl_seconds: float | None = None,
     ) -> None:
         """Инициализация кеша и источника курсов."""
-        self.cache_path = Path(cache_path)
+        from valutatrade_hub.infra.database import DatabaseManager
+
+        self._settings = SettingsLoader()
+        self._database = DatabaseManager()
+        self._cache_path = None if cache_path is None else Path(cache_path).resolve()
+        self._ttl_seconds = ttl_seconds
+        if ttl_seconds is not None:
+            validate_number(ttl_seconds, "Время хранения", positive=True)
         self.provider = provider
         self.clock = clock
-        self.ttl_seconds = validate_number(ttl_seconds, "Время хранения", positive=True)
+
+    @property
+    def cache_path(self) -> Path:
+        """Получение пути кеша курсов."""
+        return (
+            self._cache_path
+            if self._cache_path is not None
+            else self._database.path("rates")
+        )
+
+    @property
+    def ttl_seconds(self) -> float:
+        """Получение срока хранения курса."""
+        value = (
+            self._settings.get("RATES_TTL_SECONDS")
+            if self._ttl_seconds is None
+            else self._ttl_seconds
+        )
+        return validate_number(value, "Время хранения", positive=True)
 
     def _load_cache(self) -> dict[str, Any]:
         """Чтение кеша курсов валют."""
         try:
-            data = read_json(self.cache_path, {})
+            data = self._database.read(self.cache_path, {})
         except (OSError, ValueError):
             return {}
         return data if isinstance(data, dict) else {}
 
     def known_currencies(self) -> set[str]:
-        """Получение кодов известных валют."""
-        currencies = {"USD"}
-        pairs = set(STUB_RATES)
-        pairs.update(
-            pair
-            for pair, record in self._load_cache().items()
-            if isinstance(record, dict) and "rate" in record
-        )
-        for pair in pairs:
-            parts = pair.split("_")
-            if len(parts) == 2:
-                currencies.update(parts)
-        return currencies
+        """Получение кодов зарегистрированных валют."""
+        return set(supported_codes())
 
-    @staticmethod
     def _pair(
-        data: dict[str, Any], code: str, base: str
+        self, data: dict[str, Any], code: str, base: str
     ) -> tuple[float, datetime] | None:
         """Получение прямого или обратного курса из кеша."""
         candidates = []
@@ -260,14 +271,18 @@ class RateService:
                     rate = validate_number(1 / rate, "Значение курса", positive=True)
             except (KeyError, TypeError, ValueError, OverflowError):
                 continue
-            candidates.append((rate, date))
+            if date.timestamp() <= self.clock():
+                candidates.append((rate, date))
         return max(candidates, key=lambda item: item[1]) if candidates else None
 
     def _quote(self, data: dict[str, Any], code: str, base: str) -> RateQuote | None:
         """Расчёт курса валютной пары по данным кеша."""
         source = str(data.get("source", "Cache"))
-        pair = self._pair(data, code, base)
-        if pair is None and code != "USD" and base != "USD":
+        candidates = []
+        direct = self._pair(data, code, base)
+        if direct is not None:
+            candidates.append(direct)
+        if code != "USD" and base != "USD":
             first = self._pair(data, code, "USD")
             second = self._pair(data, base, "USD")
             if first is not None and second is not None:
@@ -276,11 +291,13 @@ class RateService:
                         first[0] / second[0], "Значение курса", positive=True
                     )
                 except (ValueError, OverflowError):
-                    return None
-                pair = rate, min(first[1], second[1])
-        if pair is None:
+                    pass
+                else:
+                    candidates.append((rate, min(first[1], second[1])))
+        if not candidates:
             return None
-        return RateQuote(code, base, pair[0], pair[1], source)
+        rate, date = max(candidates, key=lambda item: item[1])
+        return RateQuote(code, base, rate, date, source)
 
     def _is_fresh(self, quote: RateQuote) -> bool:
         """Проверка срока хранения курса."""
@@ -289,9 +306,14 @@ class RateService:
 
     def get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
         """Получение курса валютной пары с проверкой срока хранения."""
-        code = normalize_currency_code(from_currency)
-        base = normalize_currency_code(to_currency)
-        if code == base and code in self.known_currencies():
+        code = get_currency(from_currency).code
+        base = get_currency(to_currency).code
+        with self._database.locked():
+            return self._get_rate(code, base)
+
+    def _get_rate(self, code: str, base: str) -> RateQuote:
+        """Чтение курса и обновление просроченных данных."""
+        if code == base:
             return RateQuote(
                 code,
                 base,
@@ -304,7 +326,7 @@ class RateService:
         if quote is not None and self._is_fresh(quote):
             return quote
         if self.provider is None:
-            raise RateUnavailableError(code, base)
+            raise ApiRequestError(f"Источник курсов недоступен для {code}→{base}")
         try:
             updates = self.provider()
             if not isinstance(updates, dict):
@@ -315,6 +337,11 @@ class RateService:
             for key, record in updates.items():
                 if "_" not in key or not isinstance(record, dict):
                     continue
+                parts = key.split("_")
+                if len(parts) != 2:
+                    raise ValueError("Некорректная валютная пара источника курсов")
+                for part in parts:
+                    validate_currency_code(part)
                 rate = validate_number(record["rate"], "Значение курса", positive=True)
                 updated_at = record.get("updated_at", stamp)
                 parse_timestamp(updated_at)
@@ -323,8 +350,10 @@ class RateService:
             refreshed["last_refresh"] = stamp
             quote = self._quote(refreshed, code, base)
             if quote is None or not self._is_fresh(quote):
-                raise RateUnavailableError(code, base)
-            write_json(self.cache_path, refreshed)
+                raise ApiRequestError(f"Курс {code}→{base} отсутствует или устарел")
+            self._database.write(self.cache_path, refreshed)
             return quote
+        except ApiRequestError:
+            raise
         except (KeyError, TypeError, ValueError, OSError, OverflowError) as error:
-            raise RateUnavailableError(code, base) from error
+            raise ApiRequestError(str(error)) from error

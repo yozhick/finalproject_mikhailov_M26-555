@@ -8,11 +8,12 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from valutatrade_hub.core.currencies import get_currency, validate_currency_code
+from valutatrade_hub.core.exceptions import InsufficientFundsError
 from valutatrade_hub.core.utils import (
     get_exchange_rate,
     load_exchange_rates,
     load_user_data,
-    normalize_currency_code,
     validate_number,
     validate_user_id,
 )
@@ -153,7 +154,7 @@ class Wallet:
 
     def __init__(self, currency_code: str, balance: float = 0.0) -> None:
         """Инициализация кошелька с заданной валютой и балансом."""
-        self._currency_code = normalize_currency_code(currency_code)
+        self._currency_code = get_currency(currency_code).code
         self.balance = balance
 
     @property
@@ -180,7 +181,7 @@ class Wallet:
         """Снятие средств с проверкой доступного баланса."""
         amount = validate_number(amount, "Значение суммы", positive=True)
         if amount > self.balance:
-            raise ValueError(f"Недостаточно средств в кошельке {self.currency_code}.")
+            raise InsufficientFundsError(self.balance, amount, self.currency_code)
         self.balance = self.balance - amount
 
     def get_balance_info(self) -> dict[str, str | float]:
@@ -213,7 +214,7 @@ class Portfolio:
             if not isinstance(wallets, dict):
                 raise TypeError("Кошельки должны быть представлены словарём.")
             for code, wallet in wallets.items():
-                code = normalize_currency_code(code)
+                code = validate_currency_code(code)
                 if not isinstance(wallet, Wallet):
                     raise TypeError(
                         "Значения словаря кошельков должны иметь тип Wallet."
@@ -243,7 +244,7 @@ class Portfolio:
 
     def add_currency(self, currency_code: str) -> Wallet:
         """Создание кошелька для валюты, отсутствующей в портфеле."""
-        code = normalize_currency_code(currency_code)
+        code = get_currency(currency_code).code
         if code in self._wallets:
             raise ValueError(f"Кошелёк {code} уже существует.")
         wallet = Wallet(code)
@@ -252,7 +253,7 @@ class Portfolio:
 
     def get_wallet(self, currency_code: str) -> Wallet:
         """Получение кошелька по коду валюты."""
-        code = normalize_currency_code(currency_code)
+        code = validate_currency_code(currency_code)
         if code not in self._wallets:
             raise ValueError(f"Кошелёк {code} отсутствует в портфеле.")
         return self._wallets[code]
@@ -263,7 +264,7 @@ class Portfolio:
         exchange_rates: Mapping[str, float] | None = None,
     ) -> float:
         """Расчёт общей стоимости портфеля в базовой валюте."""
-        base = normalize_currency_code(base_currency)
+        base = validate_currency_code(base_currency)
         if not any(wallet.balance for wallet in self._wallets.values()):
             return 0.0
         rates = load_exchange_rates() if exchange_rates is None else exchange_rates

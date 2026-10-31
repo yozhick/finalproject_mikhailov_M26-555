@@ -8,6 +8,8 @@ from typing import Any
 
 from prettytable import PrettyTable
 
+from valutatrade_hub.core.currencies import FiatCurrency, get_currency, supported_codes
+from valutatrade_hub.core.exceptions import ApiRequestError, CurrencyNotFoundError
 from valutatrade_hub.core.usecases import TradingService
 
 
@@ -30,12 +32,24 @@ def build_parser() -> CommandParser:
         command.add_argument("--username", required=True)
         command.add_argument("--password", required=True)
     portfolio = commands.add_parser("show-portfolio")
-    portfolio.add_argument("--base", default="USD")
+    portfolio.add_argument("--base")
     for name in ("buy", "sell"):
-        command = commands.add_parser(name)
+        errors = (
+            "неизвестная валюта; неположительное количество; "
+            "недоступный источник курсов"
+        )
+        if name == "sell":
+            errors += "; недостаточный баланс"
+        command = commands.add_parser(name, epilog=f"Ошибки: {errors}.")
         command.add_argument("--currency", required=True)
         command.add_argument("--amount", required=True)
-    rate = commands.add_parser("get-rate")
+    rate = commands.add_parser(
+        "get-rate",
+        epilog=(
+            "Ошибки: неизвестная валюта; недоступный источник курсов. "
+            f"Поддерживаемые валюты: {', '.join(supported_codes())}."
+        ),
+    )
     rate.add_argument("--from", dest="from_currency", required=True)
     rate.add_argument("--to", dest="to_currency", required=True)
     commands.add_parser("help")
@@ -69,13 +83,13 @@ def print_help() -> None:
 def print_portfolio(report: dict[str, Any]) -> None:
     """Вывод балансов и общей стоимости портфеля."""
     base = report["base_currency"]
-    value_precision = 2 if base in {"USD", "EUR", "RUB"} else 8
+    value_precision = 2 if isinstance(get_currency(base), FiatCurrency) else 8
     print(f"Портфель пользователя '{report['username']}' (база: {base}):")
     if not report["wallets"]:
         print("Кошельки отсутствуют.")
     for wallet in report["wallets"]:
         code = wallet["currency_code"]
-        precision = 2 if code in {"USD", "EUR", "RUB"} else 4
+        precision = 2 if isinstance(get_currency(code), FiatCurrency) else 4
         print(
             f"- {code}: {wallet['balance']:.{precision}f} "
             f"→ {wallet['value']:.{value_precision}f} {base}"
@@ -154,6 +168,10 @@ def run_command(
             raise
     except (TypeError, ValueError, OSError) as error:
         print(str(error))
+        if isinstance(error, CurrencyNotFoundError):
+            print(f"Поддерживаемые валюты: {', '.join(supported_codes())}")
+        elif isinstance(error, ApiRequestError):
+            print("Повторите попытку позже или проверьте подключение к сети.")
         if exit_on_error:
             raise SystemExit(1) from None
     return True
