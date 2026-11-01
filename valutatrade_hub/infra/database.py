@@ -75,6 +75,7 @@ class DatabaseManager:
             "users": "USERS_FILE",
             "portfolios": "PORTFOLIOS_FILE",
             "rates": "RATES_FILE",
+            "history": "HISTORY_FILE",
         }
         if isinstance(name, str) and name in keys:
             return self._settings.get(keys[name])

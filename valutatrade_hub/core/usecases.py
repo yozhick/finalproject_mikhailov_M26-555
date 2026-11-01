@@ -1,10 +1,11 @@
 """Операции пользователей и валютных портфелей."""
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.currencies import CryptoCurrency, get_currency
 from valutatrade_hub.core.exceptions import InsufficientFundsError
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.utils import (
@@ -268,3 +269,42 @@ class TradingService:
         code = get_currency(from_currency).code
         base = get_currency(to_currency).code
         return self.rates.get_rate(code, base)
+
+    def update_rates(
+        self, source: str | None = None, *, notify: Callable[[str], None] | None = None
+    ) -> dict[str, Any]:
+        """Обновление кеша и истории курсов выбранных источников."""
+        from valutatrade_hub.parser_service.updater import RatesUpdater
+
+        return RatesUpdater(notify=notify).run_update(source)
+
+    def show_rates(
+        self,
+        currency: str | None = None,
+        top: int | None = None,
+        base_currency: str | None = None,
+    ) -> dict[str, Any]:
+        """Получение курсов из кеша с фильтрацией по валюте и стоимости."""
+        if top is not None:
+            if isinstance(top, bool) or not isinstance(top, int) or top <= 0:
+                raise ValueError("'top' должен быть положительным целым числом")
+        base = (
+            self._settings.get("DEFAULT_BASE_CURRENCY")
+            if base_currency is None
+            else base_currency
+        )
+        report = self.rates.cached_rates(base, currency)
+        if top is not None:
+            quotes = [
+                quote
+                for quote in report["quotes"]
+                if isinstance(get_currency(quote.from_currency), CryptoCurrency)
+            ]
+            report["quotes"] = sorted(
+                quotes, key=lambda quote: (-quote.rate, quote.from_currency)
+            )[:top]
+        if not report["quotes"]:
+            raise ValueError("В кеше отсутствуют курсы для выбранных фильтров")
+        for quote in report["quotes"]:
+            self.rates.validate_freshness(quote)
+        return report

@@ -52,6 +52,12 @@ def build_parser() -> CommandParser:
     )
     rate.add_argument("--from", dest="from_currency", required=True)
     rate.add_argument("--to", dest="to_currency", required=True)
+    update = commands.add_parser("update-rates")
+    update.add_argument("--source", choices=("coingecko", "exchangerate"))
+    rates = commands.add_parser("show-rates")
+    rates.add_argument("--currency")
+    rates.add_argument("--top", type=int)
+    rates.add_argument("--base")
     commands.add_parser("help")
     commands.add_parser("exit")
     return parser
@@ -73,6 +79,8 @@ def print_help() -> None:
             ["buy --currency CODE --amount NUMBER", "Покупка валюты"],
             ["sell --currency CODE --amount NUMBER", "Продажа валюты"],
             ["get-rate --from CODE --to CODE", "Просмотр курса валютной пары"],
+            ["update-rates [--source SOURCE]", "Обновление курсов из API"],
+            ["show-rates [--currency CODE] [--top N] [--base USD]", "Просмотр кеша"],
             ["help", "Справка по командам"],
             ["exit", "Завершение работы"],
         ]
@@ -110,6 +118,21 @@ def print_trade(result: dict[str, Any], *, selling: bool) -> None:
     print(f"- {code}: было {result['before']:.4f} → стало {result['after']:.4f}")
     label = "Оценочная выручка" if selling else "Оценочная стоимость покупки"
     print(f"{label}: {result['total']:,.2f} USD")
+
+
+def print_rates(report: dict[str, Any]) -> None:
+    """Вывод курсов и времени обновления локального кеша."""
+    print(f"Rates from cache (updated at {report['last_refresh']}):")
+    for quote in report["quotes"]:
+        if quote.rate >= 1:
+            value = f"{quote.rate:.8f}".rstrip("0")
+            if value.endswith("."):
+                value += "00"
+            elif len(value.split(".")[1]) == 1:
+                value += "0"
+        else:
+            value = f"{quote.rate:.8g}"
+        print(f"- {quote.from_currency}_{quote.to_currency}: {value}")
 
 
 def run_command(
@@ -163,6 +186,19 @@ def run_command(
                 f"Обратный курс {quote.to_currency}→{quote.from_currency}: "
                 f"{inverse:.2f}"
             )
+        elif args.command == "update-rates":
+            result = service.update_rates(args.source, notify=print)
+            if result["errors"]:
+                print(
+                    "Update completed with errors. Check logs/parser.log for details."
+                )
+            else:
+                print(
+                    f"Update successful. Total rates updated: {result['updated']}. "
+                    f"Last refresh: {result['last_refresh']}"
+                )
+        elif args.command == "show-rates":
+            print_rates(service.show_rates(args.currency, args.top, args.base))
     except SystemExit as error:
         if error.code:
             raise

@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "prettytable>=3.18.0",
+    "requests>=2.32.5",
 ]
 
 [tool.ruff]
@@ -30,10 +31,12 @@ DATA_DIR = "data"
 USERS_FILE = "users.json"
 PORTFOLIOS_FILE = "portfolios.json"
 RATES_FILE = "rates.json"
+HISTORY_FILE = "exchange_rates.json"
 RATES_TTL_SECONDS = 300
 DEFAULT_BASE_CURRENCY = "USD"
 LOG_DIR = "logs"
 LOG_FILE = "actions.log"
+PARSER_LOG_FILE = "parser.log"
 LOG_LEVEL = "INFO"
 LOG_FORMAT = "%(levelname)s %(asctime)s %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"

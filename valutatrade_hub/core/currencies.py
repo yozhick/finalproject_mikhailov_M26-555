@@ -138,6 +138,10 @@ _REGISTRY = {
     "USD": (FiatCurrency, {"name": "US Dollar", "issuing_country": "United States"}),
     "EUR": (FiatCurrency, {"name": "Euro", "issuing_country": "Eurozone"}),
     "RUB": (FiatCurrency, {"name": "Russian Ruble", "issuing_country": "Russia"}),
+    "GBP": (
+        FiatCurrency,
+        {"name": "Pound Sterling", "issuing_country": "United Kingdom"},
+    ),
     "BTC": (
         CryptoCurrency,
         {"name": "Bitcoin", "algorithm": "SHA-256", "market_cap": 1.12e12},
@@ -145,6 +149,10 @@ _REGISTRY = {
     "ETH": (
         CryptoCurrency,
         {"name": "Ethereum", "algorithm": "Ethash", "market_cap": 0.0},
+    ),
+    "SOL": (
+        CryptoCurrency,
+        {"name": "Solana", "algorithm": "Proof of Stake", "market_cap": 0.0},
     ),
 }
 

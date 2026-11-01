@@ -14,10 +14,12 @@ DEFAULTS = {
     "USERS_FILE": "users.json",
     "PORTFOLIOS_FILE": "portfolios.json",
     "RATES_FILE": "rates.json",
+    "HISTORY_FILE": "exchange_rates.json",
     "RATES_TTL_SECONDS": 300,
     "DEFAULT_BASE_CURRENCY": "USD",
     "LOG_DIR": "logs",
     "LOG_FILE": "actions.log",
+    "PARSER_LOG_FILE": "parser.log",
     "LOG_LEVEL": "INFO",
     "LOG_FORMAT": "%(levelname)s %(asctime)s %(message)s",
     "LOG_DATE_FORMAT": "%Y-%m-%dT%H:%M:%S",
@@ -109,10 +111,13 @@ class SettingsLoader:
                     raise ValueError(f"{key} должен быть непустой строкой")
             for key, parent in (("DATA_DIR", path.parent), ("LOG_DIR", path.parent)):
                 values[key] = self._resolve_path(values[key], parent)
-            for key in ("USERS_FILE", "PORTFOLIOS_FILE", "RATES_FILE"):
+            for key in ("USERS_FILE", "PORTFOLIOS_FILE", "RATES_FILE", "HISTORY_FILE"):
                 values[key] = self._resolve_path(values[key], values["DATA_DIR"])
             values["LOG_FILE"] = self._resolve_path(
                 values["LOG_FILE"], values["LOG_DIR"]
+            )
+            values["PARSER_LOG_FILE"] = self._resolve_path(
+                values["PARSER_LOG_FILE"], values["LOG_DIR"]
             )
             self._values = values
             self._config_path = path
