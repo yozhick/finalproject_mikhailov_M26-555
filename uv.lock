@@ -145,7 +145,7 @@ wheels = [
 [[package]]
 name = "finalproject-mikhailov-m26-555"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "prettytable" },
     { name = "requests" },

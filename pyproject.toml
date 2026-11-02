@@ -1,7 +1,7 @@
 [project]
 name = "finalproject-mikhailov-m26-555"
 version = "0.1.0"
-description = "Учебные модели пользователей, кошельков и валютных портфелей."
+description = "Управление виртуальным валютным портфелем и получение курсов из внешних API."
 readme = "README.md"
 authors = [
     { name = "Tinny", email = "yozhicksun@gmail.com" }
@@ -11,6 +11,19 @@ dependencies = [
     "prettytable>=3.18.0",
     "requests>=2.32.5",
 ]
+
+[project.scripts]
+valutatrade = "valutatrade_hub.cli.interface:main"
+valutatrade-parser = "valutatrade_hub.parser_service.scheduler:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "valutatrade_hub"
+module-root = ""
+source-include = ["main.py", "Makefile", "uv.lock", ".python-version"]
 
 [tool.ruff]
 line-length = 88

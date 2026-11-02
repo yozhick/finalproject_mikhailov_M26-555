@@ -178,13 +178,14 @@ def run_command(
         elif args.command == "get-rate":
             quote = service.get_rate(args.from_currency, args.to_currency)
             inverse = quote.inverse_rate
+            inverse_text = f"{inverse:.2f}" if inverse >= 1 else f"{inverse:.8g}"
             print(
                 f"Курс {quote.from_currency}→{quote.to_currency}: {quote.rate:.8f} "
                 f"(обновлено: {quote.updated_at:%Y-%m-%d %H:%M:%S})"
             )
             print(
                 f"Обратный курс {quote.to_currency}→{quote.from_currency}: "
-                f"{inverse:.2f}"
+                f"{inverse_text}"
             )
         elif args.command == "update-rates":
             result = service.update_rates(args.source, notify=print)
